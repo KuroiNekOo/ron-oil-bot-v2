@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Secrets
+.env
+credentials/
+
+# Runtime data
+# stats.json
+
+# VSCode local history
+.history/
+
+# Claude Code temp files
+tmpclaude-*
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
