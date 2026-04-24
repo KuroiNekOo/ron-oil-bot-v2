@@ -175,7 +175,63 @@ function start(client) {
         }
     });
 
-    // ── Archivage d'un casier : rename <nom>-❌ + swap des rôles employé ↔ visiteur.
+    // Helpers partagés par /casier/archive, /casier/deactivate, /casier/reactivate.
+    async function renameCasier({ channelId, firstName, lastName, suffix, reason, warnings }) {
+        if (!channelId) return;
+        try {
+            const channel = await client.channels.fetch(channelId);
+            if (!channel || typeof channel.setName !== 'function') {
+                warnings.push('Salon introuvable ou non renommable');
+                return;
+            }
+            const current = channel.name || '';
+            let target;
+            if (firstName && lastName) {
+                target = (slugify(`${firstName}-${lastName}`) + suffix).slice(0, 100);
+            } else {
+                // Fallback : retire un éventuel suffixe connu puis ajoute le nouveau.
+                const stripped = current.replace(/-[❌⌛✅]$/u, '');
+                target = (stripped + suffix).slice(0, 100);
+            }
+            if (target && current !== target) {
+                await channel.setName(target, reason);
+            }
+        } catch (e) {
+            warnings.push('Rename salon : ' + e.message);
+        }
+    }
+
+    async function applyRoleChange({ discordId, addRoleId, removeRoleId, reason, warnings }) {
+        if (!discordId) return;
+        try {
+            const guild = guildId
+                ? (client.guilds.cache.get(guildId) || await client.guilds.fetch(guildId).catch(() => null))
+                : client.guilds.cache.first();
+            if (!guild) {
+                warnings.push('Guild introuvable');
+                return;
+            }
+            let member = null;
+            try {
+                member = await guild.members.fetch(discordId);
+            } catch {
+                warnings.push('Membre Discord absent de la guild');
+                return;
+            }
+            if (removeRoleId && member.roles.cache.has(removeRoleId)) {
+                try { await member.roles.remove(removeRoleId, reason); }
+                catch (e) { warnings.push('Retrait rôle : ' + e.message); }
+            }
+            if (addRoleId && !member.roles.cache.has(addRoleId)) {
+                try { await member.roles.add(addRoleId, reason); }
+                catch (e) { warnings.push('Ajout rôle : ' + e.message); }
+            }
+        } catch (e) {
+            warnings.push('Roles : ' + e.message);
+        }
+    }
+
+    // ── Archivage d'un casier : rename <nom>-❌ + swap employé → visiteur.
     // Appelé quand un salarié est supprimé côté panel web. Best-effort : si le membre
     // a quitté la guild ou si le salon n'existe plus, on répond quand même 200 avec un
     // flag `warning` pour que le panel n'annule pas la suppression côté BDD.
@@ -185,70 +241,53 @@ function start(client) {
             if (!channelId && !discordId) {
                 return res.status(400).json({ error: 'channelId ou discordId requis' });
             }
-
             const warnings = [];
-
-            // 1) Rename du salon : prenom-nom-❌ si on a les deux, sinon fallback
-            //    sur le nom courant + suffixe. Idempotent.
-            if (channelId) {
-                try {
-                    const channel = await client.channels.fetch(channelId);
-                    if (channel && typeof channel.setName === 'function') {
-                        const current = channel.name || '';
-                        let target;
-                        if (firstName && lastName) {
-                            target = (slugify(`${firstName}-${lastName}`) + '-❌').slice(0, 100);
-                        } else if (!current.endsWith('-❌')) {
-                            target = (current + '-❌').slice(0, 100);
-                        }
-                        if (target && current !== target) {
-                            await channel.setName(target, 'Employé supprimé côté panel');
-                        }
-                    } else {
-                        warnings.push('Salon introuvable ou non renommable');
-                    }
-                } catch (e) {
-                    warnings.push('Rename salon : ' + e.message);
-                }
-            }
-
-            // 2) Swap des rôles côté membre (retire employé, remet visiteur)
-            if (discordId) {
-                try {
-                    const guild = guildId
-                        ? (client.guilds.cache.get(guildId) || await client.guilds.fetch(guildId).catch(() => null))
-                        : client.guilds.cache.first();
-                    if (!guild) {
-                        warnings.push('Guild introuvable');
-                    } else {
-                        let member = null;
-                        try {
-                            member = await guild.members.fetch(discordId);
-                        } catch {
-                            warnings.push('Membre Discord absent de la guild');
-                        }
-                        if (member) {
-                            if (employeeRoleId && member.roles.cache.has(employeeRoleId)) {
-                                try { await member.roles.remove(employeeRoleId, 'Employé supprimé côté panel'); }
-                                catch (e) { warnings.push('Retrait rôle employé : ' + e.message); }
-                            }
-                            if (visitorRoleId && !member.roles.cache.has(visitorRoleId)) {
-                                try { await member.roles.add(visitorRoleId, 'Employé supprimé côté panel'); }
-                                catch (e) { warnings.push('Ajout rôle visiteur : ' + e.message); }
-                            }
-                        }
-                    }
-                } catch (e) {
-                    warnings.push('Roles : ' + e.message);
-                }
-            }
-
-            if (warnings.length) {
-                console.warn('[api-server] /casier/archive warnings:', warnings.join(' | '));
-            }
+            const reason = 'Employé supprimé côté panel';
+            await renameCasier({ channelId, firstName, lastName, suffix: '-❌', reason, warnings });
+            await applyRoleChange({ discordId, addRoleId: visitorRoleId, removeRoleId: employeeRoleId, reason, warnings });
+            if (warnings.length) console.warn('[api-server] /casier/archive warnings:', warnings.join(' | '));
             res.json({ ok: true, warnings });
         } catch (err) {
             console.error('[api-server] POST /casier/archive error:', err);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ── Désactivation : rename <nom>-⌛ + swap employé → visiteur.
+    // Même logique que /casier/archive mais la BDD garde l'employé côté panel.
+    app.post('/casier/deactivate', async (req, res) => {
+        try {
+            const { channelId, discordId, firstName, lastName } = req.body || {};
+            if (!channelId && !discordId) {
+                return res.status(400).json({ error: 'channelId ou discordId requis' });
+            }
+            const warnings = [];
+            const reason = 'Employé désactivé côté panel';
+            await renameCasier({ channelId, firstName, lastName, suffix: '-⌛', reason, warnings });
+            await applyRoleChange({ discordId, addRoleId: visitorRoleId, removeRoleId: employeeRoleId, reason, warnings });
+            if (warnings.length) console.warn('[api-server] /casier/deactivate warnings:', warnings.join(' | '));
+            res.json({ ok: true, warnings });
+        } catch (err) {
+            console.error('[api-server] POST /casier/deactivate error:', err);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ── Réactivation : rename <nom>-✅ + swap visiteur → employé.
+    app.post('/casier/reactivate', async (req, res) => {
+        try {
+            const { channelId, discordId, firstName, lastName } = req.body || {};
+            if (!channelId && !discordId) {
+                return res.status(400).json({ error: 'channelId ou discordId requis' });
+            }
+            const warnings = [];
+            const reason = 'Employé réactivé côté panel';
+            await renameCasier({ channelId, firstName, lastName, suffix: '-✅', reason, warnings });
+            await applyRoleChange({ discordId, addRoleId: employeeRoleId, removeRoleId: visitorRoleId, reason, warnings });
+            if (warnings.length) console.warn('[api-server] /casier/reactivate warnings:', warnings.join(' | '));
+            res.json({ ok: true, warnings });
+        } catch (err) {
+            console.error('[api-server] POST /casier/reactivate error:', err);
             res.status(500).json({ error: err.message });
         }
     });
