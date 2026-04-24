@@ -207,10 +207,11 @@ function start(client) {
             }
 
             // 2) Swap des rôles côté membre (retire employé, remet visiteur)
-            if (discordId && guildId) {
+            if (discordId) {
                 try {
-                    const guild = client.guilds.cache.get(guildId)
-                        || await client.guilds.fetch(guildId).catch(() => null);
+                    const guild = guildId
+                        ? (client.guilds.cache.get(guildId) || await client.guilds.fetch(guildId).catch(() => null))
+                        : client.guilds.cache.first();
                     if (!guild) {
                         warnings.push('Guild introuvable');
                     } else {
