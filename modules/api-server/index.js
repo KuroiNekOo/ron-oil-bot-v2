@@ -181,22 +181,28 @@ function start(client) {
     // flag `warning` pour que le panel n'annule pas la suppression côté BDD.
     app.post('/casier/archive', async (req, res) => {
         try {
-            const { channelId, discordId } = req.body || {};
+            const { channelId, discordId, firstName, lastName } = req.body || {};
             if (!channelId && !discordId) {
                 return res.status(400).json({ error: 'channelId ou discordId requis' });
             }
 
             const warnings = [];
 
-            // 1) Rename du salon avec suffixe ❌ (idempotent)
+            // 1) Rename du salon : prenom-nom-❌ si on a les deux, sinon fallback
+            //    sur le nom courant + suffixe. Idempotent.
             if (channelId) {
                 try {
                     const channel = await client.channels.fetch(channelId);
                     if (channel && typeof channel.setName === 'function') {
                         const current = channel.name || '';
-                        if (!current.endsWith('-❌')) {
-                            const newName = (current + '-❌').slice(0, 100);
-                            await channel.setName(newName, 'Employé supprimé côté panel');
+                        let target;
+                        if (firstName && lastName) {
+                            target = (slugify(`${firstName}-${lastName}`) + '-❌').slice(0, 100);
+                        } else if (!current.endsWith('-❌')) {
+                            target = (current + '-❌').slice(0, 100);
+                        }
+                        if (target && current !== target) {
+                            await channel.setName(target, 'Employé supprimé côté panel');
                         }
                     } else {
                         warnings.push('Salon introuvable ou non renommable');
