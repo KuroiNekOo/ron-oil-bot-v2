@@ -162,8 +162,9 @@ function start(client) {
                         `__**Démarches obligatoires**__\n` +
                         `1. **Permis poids lourd (C)** — si tu ne l'as pas déjà, tu dois le passer. ` +
                         `Envoie ensuite une photo du permis dans ce salon.\n` +
-                        `2. **Visite médicale** — si elle n'a pas encore été faite, prends rendez-vous et passe-la.\n\n` +
-                        `Tant que ces deux démarches ne sont pas validées, tu ne peux pas prendre la route. ` +
+                        `2. **Visite médicale** — si elle n'a pas encore été faite, prends rendez-vous et passe-la.\n` +
+                        `3. **IBAN** — envoie ton IBAN dans ce salon pour pouvoir percevoir tes primes hebdomadaires.\n\n` +
+                        `Tant que le permis et la visite médicale ne sont pas validés, tu ne peux pas prendre la route. ` +
                         `En cas de question, contacte la direction.`,
                 });
             }
